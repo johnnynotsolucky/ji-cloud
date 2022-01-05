@@ -5,6 +5,7 @@ use futures_signals::{
     map_ref,
     signal::{Mutable, SignalExt},
 };
+use rand::{Rng, thread_rng};
 use serde::Deserialize;
 use wasm_bindgen::JsValue;
 use std::rc::Rc;
@@ -87,6 +88,9 @@ where
     Footer: FooterExt + 'static,
     Overlay: OverlayExt + 'static,
 {
+    let rnd: u32 = thread_rng().gen();
+    log::info!("Rendering {}", rnd);
+
     let module_kind = RawData::kind().as_str();
 
     //TODO - load from localization endpoint
@@ -155,7 +159,9 @@ where
             })
         })
         .property("subtitle", state.mode.map_or(JsValue::UNDEFINED, |m| JsValue::from_str(m.label())))
-        .child_signal(tab_config_sig().map(|tab| {
+        .child_signal(tab_config_sig().map(move |tab| {
+            log::info!("Rendering {} - JigziHelp", rnd);
+
             let HeaderConfigTab {title, body} = tab;
 
             if !title.is_empty() && !body.is_empty() {
