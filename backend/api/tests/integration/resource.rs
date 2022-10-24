@@ -1,3 +1,4 @@
+use std::panic::{self, UnwindSafe};
 use http::StatusCode;
 use insta::assert_json_snapshot;
 use serde_json::json;
@@ -375,6 +376,17 @@ async fn browse_simple(
     Ok(())
 }
 
+pub fn assert_thing<F: FnOnce() -> () + UnwindSafe>(f: F) -> anyhow::Result<()> {
+    let result = panic::catch_unwind(f);
+
+    match result {
+        Err(_error) => {
+            Err(anyhow::anyhow!("Oops"))
+        }
+        Ok(()) => Ok(())
+    }
+}
+
 #[sqlx::test]
 async fn browse_order_by(
     pool_opts: PgPoolOptions,
@@ -388,11 +400,10 @@ async fn browse_order_by(
     )
     .await;
 
-    let rt = Runtime::new().unwrap();
-
     let port = app.port();
+    let handle = app.handle();
 
-    let join_handle = rt.spawn(app.run_until_stopped());
+    let join_handle = tokio::spawn(app.run_until_stopped());
 
     println!("join_handle: {:?}", join_handle);
     let client = reqwest::Client::new();
@@ -404,11 +415,12 @@ async fn browse_order_by(
         .await?
         .error_for_status()?;
 
-    assert_eq!(resp.status(), StatusCode::OK);
+    let status = resp.status();
+    assert_thing(|| assert_eq!(status, StatusCode::OK))?;
 
     let body: serde_json::Value = resp.json().await?;
 
-    insta::assert_json_snapshot!(body);
+    assert_thing(|| insta::assert_json_snapshot!(body))?;
 
     let resp = client
         .get(&format!(
@@ -420,11 +432,12 @@ async fn browse_order_by(
         .await?
         .error_for_status()?;
 
-    assert_eq!(resp.status(), StatusCode::OK);
+    let status = resp.status();
+    assert_thing(|| assert_eq!(status, StatusCode::OK))?;
 
     let body: serde_json::Value = resp.json().await?;
 
-    insta::assert_json_snapshot!(body);
+    assert_thing(|| insta::assert_json_snapshot!(body))?;
 
     let resp = client
         .get(&format!(
@@ -436,11 +449,12 @@ async fn browse_order_by(
         .await?
         .error_for_status()?;
 
-    assert_eq!(resp.status(), StatusCode::OK);
+    let status = resp.status();
+    assert_thing(|| assert_eq!(status, StatusCode::OK))?;
 
     let body: serde_json::Value = resp.json().await?;
 
-    insta::assert_json_snapshot!(body);
+    assert_thing(|| insta::assert_json_snapshot!(body))?;
 
     Ok(())
 }

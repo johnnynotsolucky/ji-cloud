@@ -5,12 +5,13 @@ use actix_rt::time::timeout;
 use actix_service::Service;
 use actix_web::{
     body::MessageBody,
-    dev::{Server, ServiceRequest, ServiceResponse},
+    dev::{Server, ServiceRequest, ServiceResponse, ServerHandle},
     error::Error,
     middleware::{Compat, Condition},
     web::{method, Data},
     HttpRequest, HttpResponse,
 };
+use tokio::runtime::Runtime;
 use core::{
     config::JSON_BODY_LIMIT,
     env::env_bool,
@@ -72,12 +73,14 @@ where
 pub struct Application {
     port: u16,
     server: Option<Server>,
+    server_handle: Arc<ServerHandle>,
 }
 
 impl Application {
     pub fn new(port: u16, server: Server) -> Self {
         Self {
             port,
+            server_handle: Arc::new(server.handle()),
             server: Some(server),
         }
     }
@@ -124,6 +127,10 @@ impl Application {
         }
     }
 
+    pub fn handle(&self) -> Arc<ServerHandle> {
+        self.server_handle.clone()
+    }
+
     pub async fn stop(mut self, graceful: bool) {
         if let Some(server) = self.server.take() {
             server.handle().stop(graceful).await
@@ -133,12 +140,20 @@ impl Application {
 
 impl Drop for Application {
     fn drop(&mut self) {
-        if let Some(server) = self.server.take() {
-            println!("DROPPING!");
-            let _ = tokio::spawn(server.handle().stop(true));
-        } else {
-            println!("Not taking!!!");
-        }
+        let handle = self.server_handle.clone();
+        let rt = Runtime::new().unwrap();
+        let _ = rt.spawn(async move {
+            println!("handle.stop");
+            handle.stop(true).await;
+            println!("graceful?");
+        });
+        println!("spawn graceful shutdown?");
+        // if let Some(server) = self.server.take() {
+        //     println!("DROPPING!");
+        //     let _ = tokio::spawn(server.handle().stop(true));
+        // } else {
+        //     println!("Not taking!!!");
+        // }
     }
 }
 
