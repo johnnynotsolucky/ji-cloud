@@ -3,8 +3,10 @@ use dominator::clone;
 use gloo_timers::future::TimeoutFuture;
 use itertools::Itertools;
 use std::{cell::RefCell, collections::HashMap};
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::{JsCast, JsValue};
 use utils::{js_wrappers::set_event_listener, prelude::*};
-use wasm_bindgen_futures::spawn_local;
+use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{AudioContext, Event, HtmlAudioElement};
 
 const EMPTY_AUDIO_URL: &str = "data:audio/mpeg;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAABAAADQgD///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////8AAAA6TEFNRTMuMTAwAc0AAAAAAAAAABSAJAJAQgAAgAAAA0LqRHv+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//uQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV";
@@ -83,15 +85,73 @@ impl AudioMixerTop {
 
         // Unwrapping. Should never exceed number of items in pool
         let el = self.inactive.borrow_mut().pop().unwrap_ji();
-        el.set_src(&audio_message.url);
+        el.set_preload("auto");
         el.set_loop(audio_message.is_loop);
+        log::info!("before play");
+
+        spawn_local(clone!(el => async move {
+            let response = JsFuture::from(web_sys::window().unwrap().fetch_with_str(&audio_message.url)).await.unwrap_ji();
+            let response: web_sys::Response = response.into();
+            let blob = JsFuture::from(response.blob().unwrap_ji()).await.unwrap_ji();
+            let blob: web_sys::Blob = blob.into();
+            let array_buffer = JsFuture::from(blob.array_buffer()).await.unwrap_ji();
+            let uint_array = js_sys::Uint8Array::new(&array_buffer);
+
+            let array_len = uint_array.length();
+            let mut audio_data: Vec<u8> = vec![0; array_len as usize];
+            uint_array.copy_to(&mut audio_data);
+            let encoded = base64::encode(&audio_data);
+            let audio_src = format!("data:audio/mp3;base64,{encoded}");
+            log::info!("audio buffer: {encoded:#?}");
+            el.set_src(&audio_src);
+            el.load();
+            let timeout_cb = Closure::<dyn FnMut()>::new(clone!(el => move || {
+                    log::info!("timeout, playing");
+            
+                    let _ = el.play();
+                }));
+            web_sys::window()
+                .unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(timeout_cb.as_ref().unchecked_ref(), 1000)
+                .unwrap();
+            
+            timeout_cb.forget();
+        }));
+
+        // let _ = el.load();
+        // let _ = el.pause();
+        // let timeout_cb = Closure::<dyn FnMut()>::new(clone!(el => move || {
+        //         log::info!("timeout, playing");
+        //
+        //         let _ = el.play();
+        //     }));
+        // web_sys::window()
+        //     .unwrap()
+        //     .set_timeout_with_callback_and_timeout_and_arguments_0(timeout_cb.as_ref().unchecked_ref(), 1000)
+        //     .unwrap();
+        //
+        // timeout_cb.forget();
+        //
+        // // let onpause = Closure::<dyn FnMut(web_sys::Event)>::new(clone!(el => move |event| {
+        // //
+        // //     log::info!("audio loaded i think. {event:#?}");
+        // // }));
+        // //
+        // // el.set_onpause(Some(onpause.as_ref().unchecked_ref()));
+        // // onpause.forget();
+        //
+        // let onplay = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
+        //    log::info!("audio playing started");
+        // });
+        // el.set_onplay(Some(onplay.as_ref().unchecked_ref()));
+        // onplay.forget();
+
         ENDED_CALLBACKS.with(|ended_callbacks| {
             ended_callbacks
                 .borrow_mut()
                 .push((el.clone(), Box::new(on_ended)));
         });
 
-        let _ = el.play();
         self.active.borrow_mut().insert(audio_message.handle_id, el);
     }
 
